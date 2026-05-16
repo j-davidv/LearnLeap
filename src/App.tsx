@@ -5,22 +5,49 @@
 
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { BookOpen, Sparkles, Brain, LayoutGrid, ClipboardCheck, ArrowLeft, Loader2, Sparkle } from 'lucide-react';
+import { BookOpen, Sparkles, Brain, LayoutGrid, ClipboardCheck, ArrowLeft, Loader2, Sparkle, UploadCloud, X } from 'lucide-react';
 import { generateStudyMaterials, StudyMaterials } from './services/geminiService';
 import Flashcard from './components/Flashcard';
 import Quiz from './components/Quiz';
 
 export default function App() {
   const [inputText, setInputText] = useState('');
+  const [selectedFile, setSelectedFile] = useState<{ file: File; base64: string } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [materials, setMaterials] = useState<StudyMaterials | null>(null);
   const [activeTab, setActiveTab] = useState<'flashcards' | 'quiz'>('flashcards');
 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const base64String = (event.target?.result as string).split(',')[1];
+        setSelectedFile({ file, base64: base64String });
+        setInputText(''); // Clear text when file is selected
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const handleGenerate = async () => {
-    if (!inputText.trim()) return;
+    if (!inputText.trim() && !selectedFile) return;
     setIsLoading(true);
     try {
-      const result = await generateStudyMaterials(inputText);
+      let result;
+      if (selectedFile) {
+        result = await generateStudyMaterials({
+          type: 'file',
+          name: selectedFile.file.name,
+          mimeType: selectedFile.file.type || 'application/octet-stream',
+          data: selectedFile.base64
+        });
+      } else {
+        result = await generateStudyMaterials({
+          type: 'text',
+          content: inputText
+        });
+      }
       setMaterials(result);
     } catch (error) {
       console.error("Generation failed:", error);
@@ -32,6 +59,7 @@ export default function App() {
 
   const handleSampleText = () => {
     setInputText(`Photosynthesis is a process used by plants and other organisms to convert light energy into chemical energy that, through cellular respiration, can later be released to fuel the organism's activities. This chemical energy is stored in carbohydrate molecules, such as sugars and starches, which are synthesized from carbon dioxide and water. In most cases, oxygen is also released as a waste product. Most plants, algae, and cyanobacteria perform photosynthesis; such organisms are called photoautotrophs. Photosynthesis is largely responsible for producing and maintaining the oxygen content of the Earth's atmosphere, and supplies most of the energy necessary for life on Earth. The first photosynthetic organisms probably evolved early in the evolutionary history of life and most likely used reducing agents such as hydrogen or hydrogen sulfide, rather than water, as sources of electrons.`);
+    setSelectedFile(null);
   };
 
   if (isLoading) {
@@ -98,13 +126,39 @@ export default function App() {
               </div>
 
               <div className="max-w-3xl w-full bg-white rounded-2xl p-2 shadow-sm border border-slate-200">
-                <textarea
-                  value={inputText}
-                  onChange={(e) => setInputText(e.target.value)}
-                  placeholder="Paste your source text here..."
-                  className="w-full h-80 p-8 rounded-xl resize-none font-sans text-lg focus:outline-none placeholder:text-slate-300"
-                  id="source-text-input"
-                />
+                {selectedFile ? (
+                  <div className="w-full h-80 flex flex-col items-center justify-center p-8 rounded-xl bg-indigo-50/50 border-2 border-dashed border-indigo-200 relative">
+                    <button 
+                      onClick={() => setSelectedFile(null)}
+                      className="absolute top-4 right-4 p-2 text-indigo-400 hover:text-indigo-600 hover:bg-indigo-100 rounded-full transition-colors"
+                    >
+                      <X size={20} />
+                    </button>
+                    <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-sm border border-indigo-100 mb-4 text-indigo-600">
+                      <BookOpen size={28} />
+                    </div>
+                    <h3 className="text-lg font-bold text-slate-800 mb-1 truncate max-w-xs">{selectedFile.file.name}</h3>
+                    <p className="text-sm text-slate-500">{(selectedFile.file.size / 1024 / 1024).toFixed(1)} MB • {selectedFile.file.type || 'Document'}</p>
+                  </div>
+                ) : (
+                  <div className="relative">
+                    <textarea
+                      value={inputText}
+                      onChange={(e) => setInputText(e.target.value)}
+                      placeholder="Paste your source text here..."
+                      className="w-full h-80 p-8 pb-16 rounded-xl resize-none font-sans text-lg focus:outline-none placeholder:text-slate-300"
+                      id="source-text-input"
+                    />
+                    <div className="absolute bottom-4 left-4 right-4">
+                      <label className="flex items-center gap-2 px-4 py-2 bg-slate-50 hover:bg-slate-100 text-slate-600 text-sm font-medium rounded-lg border border-slate-200 cursor-pointer w-fit transition-colors">
+                        <UploadCloud size={16} className="text-indigo-500" />
+                        <span>Upload Document</span>
+                        <span className="text-xs text-slate-400 font-normal ml-1">(PDF, DOCX, PPTX)</span>
+                        <input type="file" className="hidden" accept=".pdf,.doc,.docx,.ppt,.pptx,.txt" onChange={handleFileUpload} />
+                      </label>
+                    </div>
+                  </div>
+                )}
                 <div className="flex justify-between items-center p-4 border-t border-slate-50 bg-slate-50/50 rounded-b-xl">
                   <button 
                     onClick={handleSampleText}
