@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { BookOpen, Sparkles, Brain, LayoutGrid, ClipboardCheck, ArrowLeft, Loader2, Sparkle, UploadCloud, X } from 'lucide-react';
-import { generateStudyMaterials, StudyMaterials } from './services/geminiService';
+import { BookOpen, Sparkles, Brain, LayoutGrid, ClipboardCheck, ArrowLeft, Loader2, Sparkle, UploadCloud, X, PlusCircle } from 'lucide-react';
+import { generateStudyMaterials, StudyMaterials, Flashcard as FlashcardType } from './services/geminiService';
 import Flashcard from './components/Flashcard';
 import Quiz from './components/Quiz';
 
@@ -14,19 +14,78 @@ export default function App() {
   const [inputText, setInputText] = useState('');
   const [selectedFile, setSelectedFile] = useState<{ file: File; base64: string } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [materials, setMaterials] = useState<StudyMaterials | null>(null);
+  const [materials, setMaterials] = useState<StudyMaterials | null>(() => {
+    try {
+      const saved = localStorage.getItem('lumos_materials');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    if (materials) {
+      localStorage.setItem('lumos_materials', JSON.stringify(materials));
+    } else {
+      localStorage.removeItem('lumos_materials');
+    }
+  }, [materials]);
+
   const [activeTab, setActiveTab] = useState<'flashcards' | 'quiz'>('flashcards');
+  const [isDragging, setIsDragging] = useState(false);
+  const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
+    if (!isLoading) {
+      setProgress(0);
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setProgress(prev => {
+        // Slow down progress as it goes higher to never reach 100 until actually done
+        const remaining = 99 - prev;
+        const increment = Math.max(0.5, remaining * 0.05);
+        return Math.min(99, prev + increment);
+      });
+    }, 500);
+
+    return () => clearInterval(interval);
+  }, [isLoading]);
+
+  const processFile = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64String = (event.target?.result as string).split(',')[1];
+      setSelectedFile({ file, base64: base64String });
+      setInputText(''); // Clear text when file is selected
+    };
+    reader.readAsDataURL(file);
+  };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const base64String = (event.target?.result as string).split(',')[1];
-        setSelectedFile({ file, base64: base64String });
-        setInputText(''); // Clear text when file is selected
-      };
-      reader.readAsDataURL(file);
+      processFile(file);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      processFile(file);
     }
   };
 
@@ -62,6 +121,31 @@ export default function App() {
     setSelectedFile(null);
   };
 
+  const handleUpdateFlashcard = (updatedCard: FlashcardType) => {
+    if (!materials) return;
+    setMaterials({
+      ...materials,
+      flashcards: materials.flashcards.map(c => c.id === updatedCard.id ? updatedCard : c)
+    });
+  };
+
+  const handleDeleteFlashcard = (id: number) => {
+    if (!materials) return;
+    setMaterials({
+      ...materials,
+      flashcards: materials.flashcards.filter(c => c.id !== id)
+    });
+  };
+
+  const handleRetakeMissed = (missedIds: number[]) => {
+    if (!materials) return;
+    const missedQuestions = materials.quiz.filter(q => missedIds.includes(q.id));
+    setMaterials({
+      ...materials,
+      quiz: missedQuestions
+    });
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center p-8 bg-[#F9FAFB]" id="loading-state">
@@ -73,7 +157,22 @@ export default function App() {
           <Sparkle className="text-indigo-600 w-12 h-12" />
         </motion.div>
         <h2 className="font-serif text-3xl text-slate-800 mb-2 italic tracking-tight">Analyzing source material...</h2>
-        <p className="text-slate-500 font-sans">Our AI is extracting core insights for your study kit.</p>
+        <p className="text-slate-500 font-sans mb-8">Our AI is extracting core insights for your study kit.</p>
+        
+        <div className="max-w-md w-full">
+          <div className="w-full bg-slate-200 rounded-full h-3 mb-2 overflow-hidden shadow-inner">
+            <motion.div 
+              className="bg-indigo-600 h-3 rounded-full"
+              initial={{ width: 0 }}
+              animate={{ width: `${progress}%` }}
+              transition={{ ease: "linear", duration: 0.5 }}
+            />
+          </div>
+          <div className="w-full flex justify-between text-xs font-bold text-slate-400 uppercase tracking-widest">
+            <span>Progress</span>
+            <span>{Math.round(progress)}%</span>
+          </div>
+        </div>
       </div>
     );
   }
@@ -125,7 +224,12 @@ export default function App() {
                 </p>
               </div>
 
-              <div className="max-w-3xl w-full bg-white rounded-2xl p-2 shadow-sm border border-slate-200">
+              <div 
+                className={`max-w-3xl w-full bg-white rounded-2xl p-2 shadow-sm border ${isDragging ? 'border-indigo-400 bg-indigo-50/50' : 'border-slate-200'} transition-all duration-200`}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+              >
                 {selectedFile ? (
                   <div className="w-full h-80 flex flex-col items-center justify-center p-8 rounded-xl bg-indigo-50/50 border-2 border-dashed border-indigo-200 relative">
                     <button 
@@ -145,7 +249,7 @@ export default function App() {
                     <textarea
                       value={inputText}
                       onChange={(e) => setInputText(e.target.value)}
-                      placeholder="Paste your source text here..."
+                      placeholder="Paste or drag your source text here..."
                       className="w-full h-80 p-8 pb-16 rounded-xl resize-none font-sans text-lg focus:outline-none placeholder:text-slate-300"
                       id="source-text-input"
                     />
@@ -169,9 +273,9 @@ export default function App() {
                   </button>
                   <button 
                     onClick={handleGenerate}
-                    disabled={!inputText.trim()}
+                    disabled={!inputText.trim() && !selectedFile}
                     className={`flex items-center gap-2 px-8 py-3 rounded-lg font-bold transition-all ${
-                      inputText.trim() 
+                      inputText.trim() || selectedFile
                         ? "bg-indigo-600 text-white hover:bg-indigo-700 shadow-md shadow-indigo-100" 
                         : "bg-slate-100 text-slate-300 cursor-not-allowed shadow-none"
                     }`}
@@ -276,11 +380,28 @@ export default function App() {
                     >
                       <div className="flex items-center justify-between mb-8">
                         <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">Active Recall Cards</h3>
-                        <div className="text-xs text-slate-400">Scroll to view all</div>
+                        <div className="flex items-center gap-4">
+                          <button 
+                            onClick={() => {
+                              const newId = materials.flashcards.length > 0 ? Math.max(...materials.flashcards.map(c => c.id)) + 1 : 1;
+                              const newCard: FlashcardType = { id: newId, front: "New Term", back: "New Definition", context: "", hint: "" };
+                              setMaterials({ ...materials, flashcards: [...materials.flashcards, newCard] });
+                            }}
+                            className="flex items-center gap-1 text-xs font-bold text-indigo-600 hover:text-indigo-800 uppercase tracking-widest transition-colors"
+                          >
+                            <PlusCircle size={14} /> Add Card
+                          </button>
+                          <div className="text-xs text-slate-400">Scroll to view all</div>
+                        </div>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         {materials.flashcards.map((card) => (
-                          <Flashcard key={card.id} card={card} />
+                          <Flashcard 
+                            key={card.id} 
+                            card={card} 
+                            onUpdate={handleUpdateFlashcard} 
+                            onDelete={() => handleDeleteFlashcard(card.id)} 
+                          />
                         ))}
                       </div>
                     </motion.div>
@@ -296,7 +417,25 @@ export default function App() {
                       <div className="flex items-center justify-between mb-8">
                         <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">Knowledge Validation</h3>
                       </div>
-                      <Quiz questions={materials.quiz} />
+                      <Quiz 
+                        questions={materials.quiz} 
+                        onRetakeMissed={handleRetakeMissed}
+                        onUpdateQuestion={(updatedQ) => {
+                          if (!materials) return;
+                          const exists = materials.quiz.find(q => q.id === updatedQ.id);
+                          setMaterials({
+                            ...materials,
+                            quiz: exists ? materials.quiz.map(q => q.id === updatedQ.id ? updatedQ : q) : [...materials.quiz, updatedQ]
+                          });
+                        }}
+                        onDeleteQuestion={(id) => {
+                          if (!materials) return;
+                          setMaterials({
+                            ...materials,
+                            quiz: materials.quiz.filter(q => q.id !== id)
+                          });
+                        }}
+                      />
                     </motion.div>
                   )}
                 </AnimatePresence>
