@@ -42,7 +42,11 @@ export interface StudyMaterials {
   quiz: QuizQuestion[];
 }
 
-export async function generateStudyMaterials(text: string): Promise<StudyMaterials> {
+export type StudyInput = 
+  | { type: 'text'; content: string }
+  | { type: 'file'; mimeType: string; data: string; name: string };
+
+export async function generateStudyMaterials(input: StudyInput): Promise<StudyMaterials> {
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error("VITE_GEMINI_API_KEY is not defined");
@@ -50,14 +54,27 @@ export async function generateStudyMaterials(text: string): Promise<StudyMateria
 
   const ai = new GoogleGenAI({ apiKey });
   
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: `Below is the text you must process. Generate approximately 10 flashcards and 5 quiz questions based on this content:
+  let contents;
+  
+  if (input.type === 'text') {
+    contents = `Below is the text you must process. Generate a comprehensive set of flashcards and quiz questions that thoroughly covers all the key concepts and information in this content:
 
 ---
 **SOURCE TEXT START**
-${text}
-**SOURCE TEXT END**`,
+${input.content}
+**SOURCE TEXT END**`;
+  } else {
+    contents = {
+      parts: [
+        { text: `Below is a document named "${input.name}" you must process. Generate a comprehensive set of flashcards and quiz questions that thoroughly covers all the key concepts and information in this content:` },
+        { inlineData: { mimeType: input.mimeType, data: input.data } }
+      ]
+    };
+  }
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents,
     config: {
       systemInstruction: SYSTEM_PROMPT,
       responseMimeType: "application/json",
